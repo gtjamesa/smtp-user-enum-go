@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"github.com/gtjamesa/smtp-user-enum-go/enum"
 	"log"
 	"os"
 	"sort"
@@ -11,8 +12,8 @@ import (
 )
 
 func makeConnection(c *cli.Context) {
-	var target string = c.Args().Get(0)
-	fmt.Println("Got target", target)
+	fmt.Println("Got target", c.Args().Get(0))
+	//enum.Execute(c.Args().Get(0))
 	ReadFile(c.String("wordlist"))
 }
 
@@ -48,7 +49,7 @@ func main() {
 				return cli.Exit("One or more targets must be specified", 1)
 			}
 
-			makeConnection(c)
+			enum.Execute(c)
 			return nil
 		},
 		//Commands: []*cli.Command{
