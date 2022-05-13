@@ -20,7 +20,7 @@ class SmtpServer():
         self.allow_vrfy = True
         self.allow_expn = True
         self.allow_rcpt_to = True
-        self.users = ['root', 'james']
+        self.users = ['root', 'james', 'syclone', 'spooky', 'taken', 'evilbill', 'mbjohn']
 
     # Register a client connection
     def register(self, addr, conn: socket.socket):
@@ -52,40 +52,48 @@ class SmtpServer():
         sel.register(conn, events, data=data)
         self.register(addr=addr, conn=conn)
 
+    def send(self, sock: socket.socket, data):
+        print(f'[{self._get_client_id(sock.getpeername())}]<- {data}', end='')
+        try:
+            sock.send(data.encode())
+        except:
+            # Failed sending to client
+            pass
+
     def _vrfy(self, username, sock):
         if not self.allow_vrfy:
-            sock.send(b'502 VRFY disallowed.\n')
+            self.send(sock, '502 VRFY disallowed.\n')
             return
 
         if username in self.users:
-            sock.send(f'250 2.1.5 {username} <{username}@{self.domain}>\n'.encode())
+            self.send(sock, f'250 2.1.5 {username} <{username}@{self.domain}>\n')
         else:
-            sock.send(f'550 5.1.1 {username}... User unknown\n'.encode())
+            self.send(sock, f'550 5.1.1 {username}... User unknown\n')
 
     def _expn(self, username, sock):
         if not self.allow_expn:
-            sock.send(b'502 Unimplemented command.\n')
+            self.send(sock, '502 Unimplemented command.\n')
             return
 
         if username in self.users:
-            sock.send(f'250 2.1.5 {username} <{username}@{self.domain}>\n'.encode())
+            self.send(sock, f'250 2.1.5 {username} <{username}@{self.domain}>\n')
         else:
-            sock.send(f'550 5.1.1 {username}... User unknown\n'.encode())
+            self.send(sock, f'550 5.1.1 {username}... User unknown\n')
 
-    # def _rcpt_to(self, username, sock):
-    #     if not self.allow_rcpt_to:
-    #         sock.send(b'502 Unimplemented command.\n')
-    #         return
-    #
-    #     if username in self.users:
-    #         sock.send(f'250 2.1.5 {username} <{username}@{self.domain}>\n'.encode())
-    #     else:
-    #         sock.send(f'550 5.1.1 {username}... User unknown\n'.encode())
+    def _rcpt_to(self, username, sock):
+        if not self.allow_rcpt_to:
+            self.send(sock, '502 Unimplemented command.\n')
+            return
+
+        if username in self.users:
+            self.send(sock, f'250 2.1.5 {username} <{username}@{self.domain}>\n')
+        else:
+            self.send(sock, f'550 5.1.1 {username}... User unknown\n')
 
     def handle_revc(self, data):
         # Fetch client socket
         sock = self.get_client_sock(addr=data.addr)
-        print(f'[{self._get_client_id(data.addr)}]: {data.outb.decode().strip()}')
+        print(f'[{self._get_client_id(data.addr)}]-> {data.outb.decode().strip()}')
 
         if data.outb[:5] == b'VRFY ':
             self._vrfy(data.outb[5:].decode().strip(), sock=sock)

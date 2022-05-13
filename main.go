@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
 	"github.com/gtjamesa/smtp-user-enum-go/enum"
 	"log"
 	"os"
@@ -10,30 +8,6 @@ import (
 
 	"github.com/urfave/cli/v2"
 )
-
-func makeConnection(c *cli.Context) {
-	fmt.Println("Got target", c.Args().Get(0))
-	//enum.Execute(c.Args().Get(0))
-	ReadFile(c.String("wordlist"))
-}
-
-func ReadFile(filePath string) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	// optionally, resize scanner's capacity for lines over 64K, see next example
-	for scanner.Scan() {
-		fmt.Println(scanner.Text())
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-}
 
 func main() {
 	var wordlist string
@@ -49,7 +23,9 @@ func main() {
 				return cli.Exit("One or more targets must be specified", 1)
 			}
 
-			enum.Execute(c)
+			app := enum.NewSmtpEnum(c)
+			app.Run()
+
 			return nil
 		},
 		//Commands: []*cli.Command{
@@ -82,6 +58,12 @@ func main() {
 				Usage:       "Wordlist containing usernames",
 				Destination: &wordlist,
 				Required:    true,
+			},
+			&cli.IntFlag{
+				Name:    "threads",
+				Aliases: []string{"t"},
+				Usage:   "Amount of `threads` to use",
+				Value:   8,
 			},
 			&cli.BoolFlag{
 				Name:    "verbose",

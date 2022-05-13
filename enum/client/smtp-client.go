@@ -24,8 +24,8 @@ func NewSmtpClient(host string, port int) *SmtpClient {
 	return &client
 }
 
-func (client *SmtpClient) Connect(host string, port int) {
-	fmt.Println(fmt.Sprintf("[SmtpClient] Connecting to %v:%v", host, port))
+func (c *SmtpClient) Connect(host string, port int) {
+	//fmt.Printf("[SmtpClient] Connecting to %v:%v\n", host, port)
 
 	con, err := net.Dial("tcp", fmt.Sprintf("%v:%v", host, port))
 
@@ -33,12 +33,21 @@ func (client *SmtpClient) Connect(host string, port int) {
 		log.Fatal(err)
 	}
 
-	client.socket = con
+	// Read banner from server
+	reply := make([]byte, 1024)
+	_, err = con.Read(reply)
+
+	// Error reading from server
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	c.socket = con
 }
 
-func (client *SmtpClient) write(data string) error {
+func (c *SmtpClient) write(data string) error {
 	msg := fmt.Sprintf("%s\r\n", data)
-	_, err := client.socket.Write([]byte(msg))
+	_, err := c.socket.Write([]byte(msg))
 
 	if err != nil {
 		log.Fatal(err)
@@ -47,9 +56,9 @@ func (client *SmtpClient) write(data string) error {
 	return nil
 }
 
-// writeCheck Write `data` to server, and check for 250 at the start of the response
-func (client *SmtpClient) writeCheck(data string) (bool, error) {
-	err := client.write(data)
+// writeRead will write `data` to server and return the response
+func (c *SmtpClient) writeRead(data string) (string, error) {
+	err := c.write(data)
 
 	if err != nil {
 		log.Fatal(err)
@@ -57,27 +66,38 @@ func (client *SmtpClient) writeCheck(data string) (bool, error) {
 
 	// Read response from server
 	reply := make([]byte, 1024)
-	_, err = client.socket.Read(reply)
+	_, err = c.socket.Read(reply)
 
 	// Error reading from server
 	if err != nil {
-		return false, err
+		return "", err
+	}
+
+	return string(reply), nil
+}
+
+// writeCheck Write `data` to server, and check for 250 at the start of the response
+func (c *SmtpClient) writeCheck(data string) (bool, error) {
+	reply, err := c.writeRead(data)
+
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// Check that the response starts with 250 for success
-	found := strings.HasPrefix(string(reply), "250")
+	found := strings.HasPrefix(reply, "250")
 	return found, nil
 }
 
-func (client *SmtpClient) Vrfy(username string) (bool, error) {
-	return client.writeCheck(fmt.Sprintf("VRFY %s", username))
+func (c *SmtpClient) Vrfy(username string) (bool, error) {
+	return c.writeCheck(fmt.Sprintf("VRFY %s", username))
 }
 
-func (client *SmtpClient) Expn(username string) (bool, error) {
-	return client.writeCheck(fmt.Sprintf("EXPN %s", username))
+func (c *SmtpClient) Expn(username string) (bool, error) {
+	return c.writeCheck(fmt.Sprintf("EXPN %s", username))
 }
 
-func (client *SmtpClient) Rcpt(username string) (bool, error) {
+func (c *SmtpClient) Rcpt(username string) (bool, error) {
 	// TODO: Needs to send "MAIL FROM:fake@example.com" once at the start of this enumeration mode
-	return client.writeCheck(fmt.Sprintf("RCPT TO:%s", username))
+	return c.writeCheck(fmt.Sprintf("RCPT TO:%s", username))
 }
