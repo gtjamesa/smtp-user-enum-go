@@ -13,12 +13,14 @@ import (
 )
 
 type SmtpEnum struct {
-	ctx *cli.Context
+	ctx        *cli.Context
+	resultChan chan string
 }
 
 func NewSmtpEnum(ctx *cli.Context) *SmtpEnum {
 	return &SmtpEnum{
-		ctx: ctx,
+		ctx:        ctx,
+		resultChan: make(chan string),
 	}
 }
 
@@ -38,12 +40,24 @@ func (s *SmtpEnum) getWordlist(filePath string) (*bufio.Scanner, error) {
 	return bufio.NewScanner(file), nil
 }
 
+func (s *SmtpEnum) showResults() {
+	for {
+		select {
+		case resMsg, ok := <-s.resultChan:
+			if !ok {
+				return
+			}
+
+			fmt.Printf(resMsg)
+		}
+	}
+}
+
 // worker is responsible for sending data to the SMTP server
 // Each worker will have its own connection to the target
 // wordChan is a read-only channel containing words from the wordlist
 // wg is a WaitGroup pointer to the main WaitGroup
-// resultChan is a write-only channel to output results
-func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup, resultChan chan<- string) {
+func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// Open connection to target SMTP server
@@ -68,16 +82,16 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup, resultChan
 
 			if succ {
 				msg := fmt.Sprintf("User %s found\n", username)
-				resultChan <- msg
+				s.resultChan <- msg
 			}
 		}
 	}
 }
 
 func (s *SmtpEnum) Run() {
-	var wg sync.WaitGroup
+	defer close(s.resultChan)
 
-	resultChan := make(chan string)
+	var wg sync.WaitGroup
 	threads := s.ctx.Int("threads")
 
 	// We need to wait for all threads to finish
@@ -89,7 +103,7 @@ func (s *SmtpEnum) Run() {
 	// Start `threads` workers that are listening to the wordlist channel
 	// The channel will be populated with words from the wordlist file
 	for i := 0; i < threads; i++ {
-		go s.worker(wordChan, &wg, resultChan)
+		go s.worker(wordChan, &wg)
 	}
 
 	// Read the wordlist and return a scanner
@@ -98,20 +112,8 @@ func (s *SmtpEnum) Run() {
 		log.Fatal(err)
 	}
 
-	// Listen for results?
-	go func() {
-		for {
-			select {
-			case resMsg, ok := <-resultChan:
-				if !ok {
-					fmt.Println("resultChan closed")
-					return
-				}
-
-				fmt.Printf(resMsg)
-			}
-		}
-	}()
+	// Print results to the screen as they come in from the workers
+	go s.showResults()
 
 	// Iterate the wordlist scanner
 	for scanner.Scan() {
