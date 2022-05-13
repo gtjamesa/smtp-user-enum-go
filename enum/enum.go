@@ -8,18 +8,23 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 )
 
 type SmtpEnum struct {
 	ctx        *cli.Context
+	targets    []string
+	method     string
 	resultChan chan string
 }
 
 func NewSmtpEnum(ctx *cli.Context) *SmtpEnum {
 	return &SmtpEnum{
 		ctx:        ctx,
+		targets:    ctx.Args().Slice(),
+		method:     ctx.String("method"),
 		resultChan: make(chan string),
 	}
 }
@@ -53,6 +58,24 @@ func (s *SmtpEnum) showResults() {
 	}
 }
 
+func (s *SmtpEnum) sendMethod(smtpClient *client.SmtpClient, username string) (bool, error) {
+	if s.method == "VRFY" {
+		return smtpClient.Vrfy(username)
+	}
+
+	if s.method == "EXPN" {
+		return smtpClient.Expn(username)
+	}
+
+	if s.method == "RCPT" {
+		return smtpClient.Rcpt(username)
+	}
+
+	// TODO: Refactor
+	log.Fatal("here be dragons")
+	return false, nil
+}
+
 // worker is responsible for sending data to the SMTP server
 // Each worker will have its own connection to the target
 // wordChan is a read-only channel containing words from the wordlist
@@ -61,7 +84,7 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// Open connection to target SMTP server
-	smtpClient := client.NewSmtpClient(s.ctx.Args().Get(0), s.ctx.Int("port"))
+	smtpClient := client.NewSmtpClient(s.targets[0], s.ctx.Int("port"))
 
 	for {
 		select {
@@ -74,8 +97,7 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 				return
 			}
 
-			//fmt.Printf("Got username: %s\n", username)
-			succ, err := smtpClient.Vrfy(username)
+			succ, err := s.sendMethod(smtpClient, username)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -88,8 +110,54 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 	}
 }
 
+type Probe struct {
+	test    string
+	allowed bool
+}
+
+// Probe will test the enumeration methods against the target to determine which are allowed
+func (s *SmtpEnum) probe() map[string]*Probe {
+	methods := []string{"VRFY", "EXPN", "RCPT"}
+	probes := make(map[string]*Probe)
+
+	smtpClient := client.NewSmtpClient(s.targets[0], s.ctx.Int("port"))
+
+	probes["VRFY"] = &Probe{test: "VRFY root"}
+	probes["EXPN"] = &Probe{test: "EXPN root"}
+	probes["RCPT"] = &Probe{test: "RCPT TO: root"}
+
+	for _, probe := range probes {
+		reply, err := smtpClient.WriteRead(probe.test)
+
+		if err != nil {
+			probe.allowed = false
+			continue
+		}
+
+		probe.allowed = !strings.HasPrefix(reply, "502")
+	}
+
+	// Check that the user-defined method is allowed
+	if !probes[s.method].allowed {
+		fmt.Printf("%s method disallowed by server\n", s.method)
+	}
+
+	// Switch to first available method
+	for _, method := range methods {
+		if probes[method].allowed {
+			s.method = method
+			break
+		}
+	}
+
+	return probes
+}
+
 func (s *SmtpEnum) Run() {
 	defer close(s.resultChan)
+
+	// Probe the server for available enumeration methods
+	s.probe()
 
 	var wg sync.WaitGroup
 	threads := s.ctx.Int("threads")

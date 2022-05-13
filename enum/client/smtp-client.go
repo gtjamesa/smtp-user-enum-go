@@ -45,7 +45,7 @@ func (c *SmtpClient) Connect(host string, port int) {
 	c.socket = con
 }
 
-func (c *SmtpClient) write(data string) error {
+func (c *SmtpClient) Write(data string) error {
 	msg := fmt.Sprintf("%s\r\n", data)
 	_, err := c.socket.Write([]byte(msg))
 
@@ -56,9 +56,9 @@ func (c *SmtpClient) write(data string) error {
 	return nil
 }
 
-// writeRead will write `data` to server and return the response
-func (c *SmtpClient) writeRead(data string) (string, error) {
-	err := c.write(data)
+// WriteRead will Write `data` to server and return the response
+func (c *SmtpClient) WriteRead(data string) (string, error) {
+	err := c.Write(data)
 
 	if err != nil {
 		log.Fatal(err)
@@ -76,9 +76,9 @@ func (c *SmtpClient) writeRead(data string) (string, error) {
 	return string(reply), nil
 }
 
-// writeCheck Write `data` to server, and check for 250 at the start of the response
-func (c *SmtpClient) writeCheck(data string) (bool, error) {
-	reply, err := c.writeRead(data)
+// WriteCheck Write `data` to server, and check for 250 at the start of the response
+func (c *SmtpClient) WriteCheck(data string) (bool, error) {
+	reply, err := c.WriteRead(data)
 
 	if err != nil {
 		log.Fatal(err)
@@ -90,14 +90,63 @@ func (c *SmtpClient) writeCheck(data string) (bool, error) {
 }
 
 func (c *SmtpClient) Vrfy(username string) (bool, error) {
-	return c.writeCheck(fmt.Sprintf("VRFY %s", username))
+	return c.WriteCheck(fmt.Sprintf("VRFY %s", username))
 }
 
 func (c *SmtpClient) Expn(username string) (bool, error) {
-	return c.writeCheck(fmt.Sprintf("EXPN %s", username))
+	return c.WriteCheck(fmt.Sprintf("EXPN %s", username))
 }
 
 func (c *SmtpClient) Rcpt(username string) (bool, error) {
 	// TODO: Needs to send "MAIL FROM:fake@example.com" once at the start of this enumeration mode
-	return c.writeCheck(fmt.Sprintf("RCPT TO:%s", username))
+	return c.WriteCheck(fmt.Sprintf("RCPT TO:%s", username))
 }
+
+//type Probe struct {
+//	test    string
+//	allowed bool
+//}
+//
+//func testing(james map[string]*Probe) {
+//	fmt.Println("testing 1")
+//	fmt.Println(james)
+//	fmt.Println(james["VRFY"].allowed)
+//	fmt.Println("----------")
+//}
+//
+//// Probe will test the enumeration methods against the target to determine which are allowed
+//func (c *SmtpClient) Probe() map[string]*Probe {
+//	//methods := []string{"VRFY", "EXPN", "RCPT"}
+//	probes := make(map[string]*Probe)
+//
+//	//for _, method := range methods {
+//	//	reply, err := c.WriteRead(probe.test)
+//	//
+//	//	if err != nil {
+//	//		probe.allowed = false
+//	//		continue
+//	//	}
+//	//
+//	//	probe.allowed = !strings.HasPrefix(reply, "502")
+//	//}
+//
+//	// TODO: Look into why I can't access Probe as reference (&Probe)
+//	probes["VRFY"] = &Probe{test: "VRFY root"}
+//	probes["EXPN"] = &Probe{test: "EXPN root"}
+//	probes["RCPT"] = &Probe{test: "RCPT TO: root"}
+//
+//	for _, probe := range probes {
+//		reply, err := c.WriteRead(probe.test)
+//
+//		if err != nil {
+//			probe.allowed = false
+//			continue
+//		}
+//
+//		probe.allowed = !strings.HasPrefix(reply, "502")
+//	}
+//
+//	testing(probes)
+//
+//	return probes
+//}

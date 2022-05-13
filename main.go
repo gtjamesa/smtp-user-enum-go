@@ -65,6 +65,12 @@ func main() {
 				Usage:   "Amount of `threads` to use",
 				Value:   8,
 			},
+			&cli.StringFlag{
+				Name:    "method",
+				Aliases: []string{"m"},
+				Usage:   "Enumeration `method` to use (allowed: VRFY, EXPN, RCPT)",
+				Value:   "VRFY",
+			},
 			&cli.BoolFlag{
 				Name:    "verbose",
 				Aliases: []string{"v"},

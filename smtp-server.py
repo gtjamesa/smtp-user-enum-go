@@ -17,7 +17,7 @@ class SmtpServer():
         self.port = port
         self.domain = domain
         self.clients = {}
-        self.allow_vrfy = True
+        self.allow_vrfy = False
         self.allow_expn = True
         self.allow_rcpt_to = True
         self.users = ['root', 'james', 'syclone', 'spooky', 'taken', 'evilbill', 'mbjohn']
@@ -100,6 +100,9 @@ class SmtpServer():
 
         if data.outb[:5] == b'EXPN ':
             self._expn(data.outb[5:].decode().strip(), sock=sock)
+
+        if data.outb[:8] == b'RCPT TO:':
+            self._rcpt_to(data.outb[8:].decode().strip(), sock=sock)
 
     def service_connection(self, key, mask):
         sock = key.fileobj  # type: socket.socket
