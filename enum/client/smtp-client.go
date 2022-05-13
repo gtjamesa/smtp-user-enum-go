@@ -45,6 +45,15 @@ func (c *SmtpClient) Connect(host string, port int) {
 	c.socket = con
 }
 
+func (c *SmtpClient) Close() {
+	fmt.Println("Closing SMTP socket")
+	err := c.socket.Close()
+
+	if err != nil {
+		return
+	}
+}
+
 func (c *SmtpClient) Write(data string) error {
 	msg := fmt.Sprintf("%s\r\n", data)
 	_, err := c.socket.Write([]byte(msg))
@@ -87,6 +96,21 @@ func (c *SmtpClient) WriteCheck(data string) (bool, error) {
 	// Check that the response starts with 250 for success
 	found := strings.HasPrefix(reply, "250")
 	return found, nil
+}
+
+// SendMethod TODO: Add enum
+func (c *SmtpClient) SendMethod(method string, username string) (bool, error) {
+	switch method {
+	case "VRFY":
+		return c.Vrfy(username)
+	case "EXPN":
+		return c.Expn(username)
+	case "RCPT":
+		return c.Rcpt(username)
+	default:
+		log.Fatal("here be dragons")
+		return false, nil
+	}
 }
 
 func (c *SmtpClient) Vrfy(username string) (bool, error) {

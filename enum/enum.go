@@ -63,20 +63,6 @@ func (s *SmtpEnum) showResults() {
 	}
 }
 
-func (s *SmtpEnum) sendMethod(smtpClient *client.SmtpClient, username string) (bool, error) {
-	switch s.method {
-	case "VRFY":
-		return smtpClient.Vrfy(username)
-	case "EXPN":
-		return smtpClient.Expn(username)
-	case "RCPT":
-		return smtpClient.Rcpt(username)
-	default:
-		log.Fatal("here be dragons")
-		return false, nil
-	}
-}
-
 // worker is responsible for sending data to the SMTP server
 // Each worker will have its own connection to the target
 // wordChan is a read-only channel containing words from the wordlist
@@ -98,7 +84,7 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 				return
 			}
 
-			succ, err := s.sendMethod(smtpClient, username)
+			succ, err := smtpClient.SendMethod(s.method, username)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -112,17 +98,20 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 }
 
 // Probe will test the enumeration methods against the target to determine which are allowed
-func (s *SmtpEnum) probe() (map[string]*Probe, error) {
+func (s *SmtpEnum) Probe() (map[string]*Probe, error) {
 	methods := []string{"VRFY", "EXPN", "RCPT"}
 	probes := make(map[string]*Probe)
 
 	smtpClient := client.NewSmtpClient(s.targets[0], s.ctx.Int("port"))
+	defer smtpClient.Close()
 
+	// Define probes to be sent to the target
 	probes["VRFY"] = &Probe{test: "VRFY root"}
 	probes["EXPN"] = &Probe{test: "EXPN root"}
 	probes["RCPT"] = &Probe{test: "RCPT TO: root"}
 
 	for _, probe := range probes {
+		// Send the Probe
 		reply, err := smtpClient.WriteRead(probe.test)
 
 		if err != nil {
@@ -130,6 +119,7 @@ func (s *SmtpEnum) probe() (map[string]*Probe, error) {
 			continue
 		}
 
+		// The Probe is disallowed if we receive a 502 response
 		probe.allowed = !strings.HasPrefix(reply, "502")
 	}
 
@@ -160,13 +150,6 @@ func (s *SmtpEnum) probe() (map[string]*Probe, error) {
 func (s *SmtpEnum) Run() {
 	defer close(s.resultChan)
 
-	// Probe the server for available enumeration methods
-	_, err := s.probe()
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	var wg sync.WaitGroup
 	threads := s.ctx.Int("threads")
 
@@ -175,6 +158,23 @@ func (s *SmtpEnum) Run() {
 
 	// Create buffered channel containing the wordlist
 	wordChan := make(chan string, threads)
+
+	// Signal channel
+	sc := make(chan os.Signal, 1)
+
+	go func() {
+		// Listen to interrupt signal (Ctrl+C, SIGTERM, SIGQUIT, etc.)
+		// When we receive a signal, it is fed into the `sc` channel
+		signal.Notify(sc, os.Interrupt)
+		<-sc
+		fmt.Println("Got interrupt, exiting")
+		os.Exit(0)
+	}()
+
+	// Probe the server for available enumeration methods
+	if _, err := s.Probe(); err != nil {
+		log.Fatal(err)
+	}
 
 	// Start `threads` workers that are listening to the wordlist channel
 	// The channel will be populated with words from the wordlist file
