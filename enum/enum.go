@@ -13,6 +13,11 @@ import (
 	"syscall"
 )
 
+type Probe struct {
+	test    string
+	allowed bool
+}
+
 type SmtpEnum struct {
 	ctx        *cli.Context
 	targets    []string
@@ -59,21 +64,17 @@ func (s *SmtpEnum) showResults() {
 }
 
 func (s *SmtpEnum) sendMethod(smtpClient *client.SmtpClient, username string) (bool, error) {
-	if s.method == "VRFY" {
+	switch s.method {
+	case "VRFY":
 		return smtpClient.Vrfy(username)
-	}
-
-	if s.method == "EXPN" {
+	case "EXPN":
 		return smtpClient.Expn(username)
-	}
-
-	if s.method == "RCPT" {
+	case "RCPT":
 		return smtpClient.Rcpt(username)
+	default:
+		log.Fatal("here be dragons")
+		return false, nil
 	}
-
-	// TODO: Refactor
-	log.Fatal("here be dragons")
-	return false, nil
 }
 
 // worker is responsible for sending data to the SMTP server
@@ -110,13 +111,8 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 	}
 }
 
-type Probe struct {
-	test    string
-	allowed bool
-}
-
 // Probe will test the enumeration methods against the target to determine which are allowed
-func (s *SmtpEnum) probe() map[string]*Probe {
+func (s *SmtpEnum) probe() (map[string]*Probe, error) {
 	methods := []string{"VRFY", "EXPN", "RCPT"}
 	probes := make(map[string]*Probe)
 
@@ -138,26 +134,38 @@ func (s *SmtpEnum) probe() map[string]*Probe {
 	}
 
 	// Check that the user-defined method is allowed
-	if !probes[s.method].allowed {
-		fmt.Printf("%s method disallowed by server\n", s.method)
+	if probes[s.method].allowed {
+		return probes, nil
 	}
 
+	fmt.Printf("%s method disallowed by server\n", s.method)
+
 	// Switch to first available method
+	var found = false
 	for _, method := range methods {
 		if probes[method].allowed {
 			s.method = method
+			found = true
 			break
 		}
 	}
 
-	return probes
+	if !found {
+		return probes, fmt.Errorf("no available enumeration methods found")
+	}
+
+	return probes, nil
 }
 
 func (s *SmtpEnum) Run() {
 	defer close(s.resultChan)
 
 	// Probe the server for available enumeration methods
-	s.probe()
+	_, err := s.probe()
+
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	var wg sync.WaitGroup
 	threads := s.ctx.Int("threads")
