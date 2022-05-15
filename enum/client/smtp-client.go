@@ -11,6 +11,7 @@ type SmtpClient struct {
 	host   string
 	port   int
 	socket net.Conn
+	banner string
 }
 
 func NewSmtpClient(host string, port int) *SmtpClient {
@@ -25,8 +26,6 @@ func NewSmtpClient(host string, port int) *SmtpClient {
 }
 
 func (c *SmtpClient) Connect(host string, port int) {
-	//fmt.Printf("[SmtpClient] Connecting to %v:%v\n", host, port)
-
 	con, err := net.Dial("tcp", fmt.Sprintf("%v:%v", host, port))
 
 	if err != nil {
@@ -35,23 +34,24 @@ func (c *SmtpClient) Connect(host string, port int) {
 
 	// Read banner from server
 	reply := make([]byte, 1024)
-	_, err = con.Read(reply)
-
-	// Error reading from server
-	if err != nil {
+	if _, err := con.Read(reply); err != nil {
 		log.Fatal(err)
 	}
 
+	c.banner = strings.TrimSpace(string(reply))
 	c.socket = con
 }
 
 func (c *SmtpClient) Close() {
-	fmt.Println("Closing SMTP socket")
 	err := c.socket.Close()
 
 	if err != nil {
 		return
 	}
+}
+
+func (c *SmtpClient) GetBanner() string {
+	return c.banner
 }
 
 func (c *SmtpClient) Write(data string) error {
@@ -86,20 +86,19 @@ func (c *SmtpClient) WriteRead(data string) (string, error) {
 }
 
 // WriteCheck Write `data` to server, and check for 250 at the start of the response
-func (c *SmtpClient) WriteCheck(data string) (bool, error) {
+func (c *SmtpClient) WriteCheck(data string) (bool, string, error) {
 	reply, err := c.WriteRead(data)
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Check that the response starts with 250 for success
-	found := strings.HasPrefix(reply, "250")
-	return found, nil
+	// Check that the response has a positive completion code
+	return c.isValid(reply), strings.TrimSpace(reply), nil
 }
 
 // SendMethod TODO: Add enum
-func (c *SmtpClient) SendMethod(method string, username string) (bool, error) {
+func (c *SmtpClient) SendMethod(method string, username string) (bool, string, error) {
 	switch method {
 	case "VRFY":
 		return c.Vrfy(username)
@@ -109,21 +108,27 @@ func (c *SmtpClient) SendMethod(method string, username string) (bool, error) {
 		return c.Rcpt(username)
 	default:
 		log.Fatal("here be dragons")
-		return false, nil
+		return false, "", nil
 	}
 }
 
-func (c *SmtpClient) Vrfy(username string) (bool, error) {
+func (c *SmtpClient) Vrfy(username string) (bool, string, error) {
 	return c.WriteCheck(fmt.Sprintf("VRFY %s", username))
 }
 
-func (c *SmtpClient) Expn(username string) (bool, error) {
+func (c *SmtpClient) Expn(username string) (bool, string, error) {
 	return c.WriteCheck(fmt.Sprintf("EXPN %s", username))
 }
 
-func (c *SmtpClient) Rcpt(username string) (bool, error) {
+func (c *SmtpClient) Rcpt(username string) (bool, string, error) {
 	// TODO: Needs to send "MAIL FROM:fake@example.com" once at the start of this enumeration mode
 	return c.WriteCheck(fmt.Sprintf("RCPT TO:%s", username))
+}
+
+// isValid will return true for positive completion status codes
+// https://en.wikipedia.org/wiki/List_of_SMTP_server_return_codes#%E2%80%94_2yz_Positive_completion
+func (c *SmtpClient) isValid(reply string) bool {
+	return strings.HasPrefix(reply, "250") || strings.HasPrefix(reply, "251")
 }
 
 //type Probe struct {

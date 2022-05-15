@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 )
 
 type Probe struct {
@@ -18,11 +17,16 @@ type Probe struct {
 	allowed bool
 }
 
+type Result struct {
+	username string
+	reply    string
+}
+
 type SmtpEnum struct {
 	ctx        *cli.Context
 	targets    []string
 	method     string
-	resultChan chan string
+	resultChan chan Result
 }
 
 func NewSmtpEnum(ctx *cli.Context) *SmtpEnum {
@@ -30,7 +34,7 @@ func NewSmtpEnum(ctx *cli.Context) *SmtpEnum {
 		ctx:        ctx,
 		targets:    ctx.Args().Slice(),
 		method:     ctx.String("method"),
-		resultChan: make(chan string),
+		resultChan: make(chan Result),
 	}
 }
 
@@ -58,7 +62,12 @@ func (s *SmtpEnum) showResults() {
 				return
 			}
 
-			fmt.Printf(resMsg)
+			if s.ctx.Bool("verbose") {
+				fmt.Printf("%s\t\t%s", resMsg.username, resMsg.reply)
+				continue
+			}
+
+			fmt.Printf("%s\n", resMsg.username)
 		}
 	}
 }
@@ -84,14 +93,16 @@ func (s *SmtpEnum) worker(wordChan <-chan string, wg *sync.WaitGroup) {
 				return
 			}
 
-			succ, err := smtpClient.SendMethod(s.method, username)
+			succ, reply, err := smtpClient.SendMethod(s.method, username)
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			if succ {
-				msg := fmt.Sprintf("User %s found\n", username)
-				s.resultChan <- msg
+				s.resultChan <- Result{
+					username: username,
+					reply:    reply,
+				}
 			}
 		}
 	}
@@ -109,6 +120,8 @@ func (s *SmtpEnum) Probe() (map[string]*Probe, error) {
 	probes["VRFY"] = &Probe{test: "VRFY root"}
 	probes["EXPN"] = &Probe{test: "EXPN root"}
 	probes["RCPT"] = &Probe{test: "RCPT TO: root"}
+
+	fmt.Printf(smtpClient.GetBanner())
 
 	for _, probe := range probes {
 		// Send the Probe
@@ -159,17 +172,8 @@ func (s *SmtpEnum) Run() {
 	// Create buffered channel containing the wordlist
 	wordChan := make(chan string, threads)
 
-	// Signal channel
-	sc := make(chan os.Signal, 1)
-
-	go func() {
-		// Listen to interrupt signal (Ctrl+C, SIGTERM, SIGQUIT, etc.)
-		// When we receive a signal, it is fed into the `sc` channel
-		signal.Notify(sc, os.Interrupt)
-		<-sc
-		fmt.Println("Got interrupt, exiting")
-		os.Exit(0)
-	}()
+	// Listen for interrupt calls to exit cleanly
+	listenForInterrupt()
 
 	// Probe the server for available enumeration methods
 	if _, err := s.Probe(); err != nil {
@@ -195,7 +199,6 @@ func (s *SmtpEnum) Run() {
 	for scanner.Scan() {
 		select {
 		case <-s.ctx.Done():
-			close(wordChan)
 			return
 		default:
 			// Read a word from the wordlist scanner
@@ -209,79 +212,15 @@ func (s *SmtpEnum) Run() {
 	wg.Wait()
 }
 
-// waitForExit will return a read-only channel and will only return once `runC` is closed
-// the function listens for an interrupt signal and will allow a safe exit
-// called from main code as "<-waitForExit()"
-func waitForExit() <-chan struct{} {
-	runC := make(chan struct{}, 1)
+func listenForInterrupt() {
+	// Signal channel
 	sc := make(chan os.Signal, 1)
 
-	// Listen to interrupt signal (Ctrl+C, SIGTERM, SIGQUIT, etc.)
-	// When we receive a signal, it is fed into the `sc` channel
-	signal.Notify(sc, os.Interrupt)
-
 	go func() {
-		// Close `runC` after the function has completed
-		defer close(runC)
-		// Read data from `sc`, this will block until `sc` channel has data
-		// This stops the function from completing until we receive an interrupt signal
+		// Listen to interrupt signal (Ctrl+C, SIGTERM, SIGQUIT, etc.)
+		// When we receive a signal, it is fed into the `sc` channel
+		signal.Notify(sc, os.Interrupt)
 		<-sc
+		os.Exit(0)
 	}()
-
-	return runC
-}
-
-type Scheduler struct {
-	workers   int
-	msgC      chan struct{}
-	signalC   chan os.Signal
-	waitGroup sync.WaitGroup
-}
-
-func NewScheduler(workers, buffer int) *Scheduler {
-	return &Scheduler{
-		// Amount of workers
-		workers: workers,
-		// Channel to receive events
-		msgC: make(chan struct{}, buffer),
-		// Channel to receive signals
-		signalC: make(chan os.Signal, 1),
-	}
-}
-
-func (s *Scheduler) ListenForWork() {
-	go func() { // 1. Listen for messages to process
-		signal.Notify(s.signalC, syscall.SIGTERM)
-
-		for {
-			<-s.signalC
-			s.msgC <- struct{}{} // 2. Send to processing channel
-		}
-	}()
-
-	s.waitGroup.Add(s.workers)
-
-	for i := 0; i < s.workers; i++ {
-		i := i
-		go func() {
-			for {
-				select {
-				case _, open := <-s.msgC: // 3. Wait for messages to process
-					// Channel closed, exiting
-					if !open {
-						fmt.Printf("%d closing\n", i+1)
-						s.waitGroup.Done()
-						return
-					}
-
-					fmt.Printf("%d<- Processing\n", i)
-				}
-			}
-		}()
-	}
-}
-
-func (s *Scheduler) Exit() {
-	close(s.msgC)
-	s.waitGroup.Wait()
 }
